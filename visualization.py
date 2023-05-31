@@ -1,10 +1,19 @@
+import glob
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import SymmetricalLogLocator
 
-def visualize_metrics(csv_file, pdf_file):
+def visualize_metrics(test_name):
+    pdf_file = f"{test_name}.pdf"
+
     # Read the CSV file
-    df = pd.read_csv(csv_file)
+    n_tests = 0
+    df = 0
+    for csv_file in glob.glob(f'{test_name}*.csv'):    
+        df += pd.read_csv(csv_file)
+        n_tests += 1
+    df = df/n_tests
+    df.to_csv(f'{test_name}.csv', index=False)
 
     df = df[df['Epoch'] >= 1]
     # Extract the required metrics data
@@ -21,7 +30,7 @@ def visualize_metrics(csv_file, pdf_file):
         is_loss = metric in  ('Train Loss', 'Test Loss')
         ax = axs[i] if not is_loss else axs[-1]
         ax.set_ylabel(metric)
-        ax.set_title(f'{metric} over Iterations (Depth: {depth})')
+        ax.set_title(f'test_name: {test_name}, n_tests: {n_tests}, {metric} over Iterations (Depth: {depth})')
         for layer_index in layer_indices if not is_loss else[0]:
             if metric == ('Train Loss' or metric == 'Test Loss') and layer_index > 0:
                 continue
@@ -37,7 +46,7 @@ def visualize_metrics(csv_file, pdf_file):
         ax.yaxis.set_major_locator(SymmetricalLogLocator(linthresh=0.1, base=10))
 
         # Set x-axis to Log Scale
-        ax.set_xscale('log')
+        # ax.set_xscale('log')
 
     # Set x-label for the last subplot
     axs[-1].set_xlabel('Global Iteration')
@@ -54,9 +63,8 @@ if __name__ == "__main__":
 
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Visualize metrics from a CSV file")
-    parser.add_argument("--csv_file", default="metrics_tamielectric.csv", type=str, help="Path to the CSV file")
-    parser.add_argument("--pdf_file", default="metrics.pdf", type=str, help="Path to save the PDF file")
+    parser.add_argument("--test_name", default="metrics", type=str, help="Test name")
     args = parser.parse_args()
 
     # Visualize the metrics
-    visualize_metrics(args.csv_file, args.pdf_file)
+    visualize_metrics(args.test_name)

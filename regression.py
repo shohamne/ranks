@@ -9,19 +9,23 @@ import csv
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Train deep networks on a UCI regression dataset.")
-    parser.add_argument("--dataset", type=str, default="challenger", help="UCI dataset")
+    parser.add_argument("--dataset", type=str, default="concrete", help="UCI dataset")
     parser.add_argument("--hidden_size", type=int, default=64, help="Number of units in hidden layers")
     parser.add_argument("--depth", type=int, default=4, help="Depth of the neural network")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs to train the model")
     parser.add_argument("--lambdas", nargs="+", type=float, default=[0.1, 1.0, 10.0], help="Lambda values for smooth rank")
     parser.add_argument("--lr", type=float, default=0.001, help="Learning rate for optimizer")
-    parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay rate for optimizer")
+    parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay rate for optimizer")
     parser.add_argument("--device", type=str, default="cpu", help="Device to run the model on - 'cpu' or 'cuda'")
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size for training")
     parser.add_argument("--evaluation_batch_size", type=int, default=64, help="Batch size for evaluation")
     parser.add_argument("--csv_name", type=str, default="metrics.csv", help="Name of the CSV file to save metrics")
     parser.add_argument("--alpha", type=float, default=0.9, help="Decay rate for running covariance matrix")
     parser.add_argument("--beta", type=float, default=0.1, help="Coefficient for smooth rank regularization in the loss")
+    parser.add_argument("--start_layer", type=int, default=3, help="First layer to regulize it's input")
+    parser.add_argument("--stop_rank_reg", type=int, default=50, help="Epoch to stop rank regularization")
+    parser.add_argument("--split", type=int, default=0, help="Split of the dataset to use for training")
+
     return parser.parse_args()
 
 def main(args):
@@ -29,7 +33,7 @@ def main(args):
 
     # Load UCI regression dataset
     data = uci_datasets.Dataset(args.dataset)
-    x_train, y_train, x_test, y_test = data.get_split(split=0)
+    x_train, y_train, x_test, y_test = data.get_split(split=args.split)
 
     train_data = TensorDataset(torch.tensor(x_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.float32))
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
@@ -43,8 +47,8 @@ def main(args):
         def __init__(self, input_size, output_size, depth, hidden_size):
             super(DeepNetwork, self).__init__()
             self.layers = nn.ModuleList(
-                [nn.Sequential(nn.Linear(input_size, hidden_size), nn.ReLU())] +
-                [nn.Sequential(nn.Linear(hidden_size, hidden_size), nn.ReLU()) for _ in range(depth - 2)] +
+                [nn.Sequential(nn.Linear(input_size, hidden_size), nn.Tanh())] +
+                [nn.Sequential(nn.Linear(hidden_size, hidden_size), nn.Tanh()) for _ in range(depth - 2)] +
                 [nn.Linear(hidden_size, output_size)]
             )
 
@@ -121,10 +125,11 @@ def main(args):
             loss = 0
             activations = x_batch
             for l, layer in enumerate(model.layers):
-                if 1 <= l <= args.depth - 2:
+                if (args.start_layer <= l <= args.depth - 1) and (epoch < args.stop_rank_reg):
                     F_per_layer[l] = args.alpha * F_per_layer[l].detach() + (1 - args.alpha) * activations.T @ activations
-                    loss += compute_smooth_rank(F_per_layer[l], 1.0)
+                    loss += args.beta*compute_smooth_rank(F_per_layer[l], args.weight_decay)
                 activations = layer(activations)
+                
             output = activations
             loss += criterion(output, y_batch)
             loss.backward()
@@ -142,7 +147,7 @@ def main(args):
             row.extend([train_loss, test_loss])
             csv_writer.writerow(row)
 
-        print(f"Epoch {epoch}: Train Loss = {train_loss}, Test Loss = {test_loss}")
+        print(f"Epoch {epoch}: Train Loss = {train_loss}, Test Loss = {test_loss}, SR[2][1] = {smooth_ranks_per_layer[3][1]}")
 
     csv_file.close()
 

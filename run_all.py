@@ -5,32 +5,35 @@ import queue
 import uci_datasets
 
 # Configuration variables
-tasks_per_gpu = 3
+tasks_per_gpu = 4
 
 datasets = [name for name, (n_observations, n_dimensions) in uci_datasets.all_datasets.items() if 1000 < n_observations < 100000]
-
+#datasets = datasets[:1]
 def run_regression_and_visualization(task):
-    dataset, beta, gpu_index = task
-
+    dataset, beta, start_layer, split, gpu_index = task
+    test_name = f"metrics_{dataset}_beta={beta}_start_layer={start_layer}"
     regression_cmd = [
         "python", "regression.py",
         "--dataset", dataset,
         "--hidden_size", "64",
         "--depth", "4",
-        "--epochs", "100",
+        "--epochs", "1000",
+        "--stop_rank_reg", "1000",
         "--lambdas", "0.1", "1.0", "10.0",
         "--lr", "0.001",
         "--beta", str(beta),
+        "--start_layer", str(start_layer),
+        "--split", str(split),
         "--device", f"cuda:{gpu_index}",
-        "--csv_name", f"metrics_{dataset}_beta={beta}.csv"
+        "--csv_name", f"{test_name}_split={split}.csv"
     ]
+
     print(" ".join(regression_cmd))
     subprocess.run(regression_cmd, check=True)
 
     visualization_cmd = [
         "python", "visualization.py",
-        "--csv_file", f"metrics_{dataset}_beta={beta}.csv",
-        "--pdf_file", f"metrics_{dataset}_beta={beta}.pdf"
+        "--test_name", f"{test_name}",
     ]
     subprocess.run(visualization_cmd, check=True)
 
@@ -45,9 +48,11 @@ tasks = queue.Queue()
 
 gpu_index = 0
 for dataset_index, dataset in enumerate(datasets):
-    for beta in [0.0, 0.01]:
-        tasks.put((dataset, beta, gpu_index))
-        gpu_index = (gpu_index + 1) % num_gpus
+    for split in range(10):
+        for beta in [0.0, 0.01]:
+            for start_layer in ([1, 2, 3] if beta != 0.0 else [3]):
+                tasks.put((dataset, beta, start_layer, split, gpu_index))
+                gpu_index = (gpu_index + 1) % num_gpus
 
 # Create a pool of workers
 with concurrent.futures.ProcessPoolExecutor(max_workers=total_concurrent_tasks) as executor:
