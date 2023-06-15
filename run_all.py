@@ -1,41 +1,30 @@
+import time
 import concurrent.futures
 import subprocess
 import torch
 import queue
 import uci_datasets
 
+from task_queue_gpu import Task, GpuQueue
+
 # Configuration variables
-tasks_per_gpu = 4
+tasks_per_gpu = 6
 
-datasets = [name for name, (n_observations, n_dimensions) in uci_datasets.all_datasets.items() if 1000 < n_observations < 100000]
-#datasets = datasets[:1]
-def run_regression_and_visualization(task):
-    dataset, beta, start_layer, split, gpu_index = task
-    test_name = f"metrics_{dataset}_beta={beta}_start_layer={start_layer}"
-    regression_cmd = [
-        "python", "regression.py",
-        "--dataset", dataset,
-        "--hidden_size", "64",
-        "--depth", "4",
-        "--epochs", "1000",
-        "--stop_rank_reg", "1000",
-        "--lambdas", "0.1", "1.0", "10.0",
-        "--lr", "0.001",
-        "--beta", str(beta),
-        "--start_layer", str(start_layer),
-        "--split", str(split),
-        "--device", f"cuda:{gpu_index}",
-        "--csv_name", f"{test_name}_split={split}.csv"
-    ]
+datasets = [name for name, (n_observations, n_dimensions) in uci_datasets.all_datasets.items() if 10000 < n_observations < 50000]
 
-    print(" ".join(regression_cmd))
-    subprocess.run(regression_cmd, check=True)
+def convert_dict_to_cli_args(dict_args):
+    cli_args = []
+    for key, value in dict_args.items():
+        cli_args.extend([f'--{key}', str(value)])
+    return cli_args
 
-    visualization_cmd = [
-        "python", "visualization.py",
-        "--test_name", f"{test_name}",
-    ]
-    subprocess.run(visualization_cmd, check=True)
+
+def run_regression(args):
+    regression_cmd = ["python", "regression.py"] + \
+        convert_dict_to_cli_args(args) + \
+            ["--csv_name", f"{args}.csv"]
+    #print("\n"," ".join(regression_cmd), "\n")
+    subprocess.run(regression_cmd, check=True)#, stdout=subprocess.DEVNULL)
 
 # Get the number of available GPUs
 num_gpus = torch.cuda.device_count()
@@ -44,39 +33,20 @@ num_gpus = torch.cuda.device_count()
 total_concurrent_tasks = num_gpus * tasks_per_gpu
 
 # Create a queue of tasks
-tasks = queue.Queue()
+gpu_queue = GpuQueue(num_gpus, tasks_per_gpu)
 
 gpu_index = 0
-for dataset_index, dataset in enumerate(datasets):
-    for split in range(10):
-        for beta in [0.0, 0.01]:
-            for start_layer in ([1, 2, 3] if beta != 0.0 else [3]):
-                tasks.put((dataset, beta, start_layer, split, gpu_index))
-                gpu_index = (gpu_index + 1) % num_gpus
+for dataset_index, dataset in enumerate(datasets[:3]):
+    for sigma0 in [1.0]:
+        for optimize_sigma in [0]:# if sigma0 != 1.0 else [0, 1]:
+            for split in range(5):
+                for start_layer in [2, 3]:
+                    args = {'dataset': dataset, 'split': split, 'start_layer': start_layer,
+                                'sigma0': sigma0, 'optimize_sigma': optimize_sigma}
+                    task = Task(id=args, processing_function=run_regression, args=args) 
+                    gpu_queue.add_task(task)
 
-# Create a pool of workers
-with concurrent.futures.ProcessPoolExecutor(max_workers=total_concurrent_tasks) as executor:
-    futures = {}
-    for _ in range(total_concurrent_tasks):
-        gpu = _ % num_gpus
-        if not tasks.empty():
-            new_future = executor.submit(run_regression_and_visualization, tasks.get())
-            futures[new_future] = gpu
-
-    while futures:
-        # Wait for a process to complete
-        done, _ = concurrent.futures.wait(futures.keys(), return_when=concurrent.futures.FIRST_COMPLETED)
-
-        for future in done:
-            gpu = futures.pop(future)
-            try:
-                future.result()  # Get the result or raise the exception
-            except Exception as e:
-                print(f"Task on GPU {gpu} raised an exception: {e}")
-
-            # If there are more tasks, start a new one
-            if not tasks.empty():
-                new_future = executor.submit(run_regression_and_visualization, tasks.get())
-                futures[new_future] = gpu
-
-print("All tasks completed!")
+print(f"Running {gpu_queue.task_queue.qsize()} tasks on {num_gpus} GPUs")
+gpu_queue.process_tasks()  # User calls process_tasks when ready                
+gpu_queue.wait_for_completion()
+print("All tasks completed")
