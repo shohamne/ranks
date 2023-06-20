@@ -11,6 +11,7 @@ from task_queue_gpu import Task, GpuQueue
 tasks_per_gpu = 6
 
 datasets = [name for name, (n_observations, n_dimensions) in uci_datasets.all_datasets.items() if 10000 < n_observations < 50000]
+datasets = ['gas']
 
 def convert_dict_to_cli_args(dict_args):
     cli_args = []
@@ -36,13 +37,15 @@ total_concurrent_tasks = num_gpus * tasks_per_gpu
 gpu_queue = GpuQueue(num_gpus, tasks_per_gpu)
 
 gpu_index = 0
-for dataset_index, dataset in enumerate(datasets[:3]):
-    for sigma0 in [1.0]:
-        for optimize_sigma in [0]:# if sigma0 != 1.0 else [0, 1]:
-            for split in range(5):
-                for start_layer in [2, 3]:
+for dataset_index, dataset in enumerate(datasets):
+    for sigma0 in [0.0001]:
+        for optimize_sigma in [1]:# if sigma0 != 1.0 else [0, 1]:
+            for split in range(1):
+                for start_layer in [2]:
                     args = {'dataset': dataset, 'split': split, 'start_layer': start_layer,
-                                'sigma0': sigma0, 'optimize_sigma': optimize_sigma}
+                                'l2_coeff': 0.000,'optimizer':'adam', 'lr': 0.00001, 'epochs': 1000,
+                                'logdet_coeff':-1,
+                                'sigma0': 1.0, 'optimize_sigma': optimize_sigma}
                     task = Task(id=args, processing_function=run_regression, args=args) 
                     gpu_queue.add_task(task)
 
