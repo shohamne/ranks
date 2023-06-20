@@ -82,9 +82,9 @@ def main(args):
         def __init__(self, input_size, output_size, depth, hidden_size):
             super(DeepNetwork, self).__init__()
             self.layers = nn.ModuleList(
-                [nn.Sequential(nn.Linear(input_size, hidden_size, bias=False), nn.ReLU())] +
-                [nn.Sequential(nn.Linear(hidden_size, hidden_size, bias=False), nn.ReLU()) for _ in range(depth - 2)] +
-                [nn.Sequential(nn.Linear(hidden_size, output_size, bias=False))]
+                    [nn.Sequential(nn.Linear(input_size, hidden_size, bias=False), nn.ReLU())] +
+                    [nn.Sequential(nn.Linear(hidden_size, hidden_size, bias=False), nn.ReLU()) for _ in range(depth - 2)] +
+                    [nn.Sequential(nn.Linear(hidden_size, output_size, bias=False))]
             )
             self.sigma = torch.nn.Parameter(torch.tensor(args.sigma0), requires_grad=args.optimize_sigma)
 

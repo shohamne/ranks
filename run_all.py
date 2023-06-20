@@ -11,7 +11,7 @@ from task_queue_gpu import Task, GpuQueue
 tasks_per_gpu = 6
 
 datasets = [name for name, (n_observations, n_dimensions) in uci_datasets.all_datasets.items() if 10000 < n_observations < 50000]
-datasets = ['gas']
+datasets = ['parkinsons']
 
 def convert_dict_to_cli_args(dict_args):
     cli_args = []
