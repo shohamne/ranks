@@ -25,7 +25,7 @@ def run_regression(args):
         convert_dict_to_cli_args(args) + \
             ["--csv_name", f"{args}.csv"]
     print("\n"," ".join(regression_cmd), "\n")
-    subprocess.run(regression_cmd, check=True)#, stdout=subprocess.DEVNULL)
+    subprocess.run(regression_cmd, check=True, stdout=subprocess.DEVNULL)
 
 # Get the number of available GPUs
 num_gpus = torch.cuda.device_count()
@@ -39,14 +39,21 @@ gpu_queue = GpuQueue(num_gpus, tasks_per_gpu)
 gpu_index = 0
 for dataset_index, dataset in enumerate(datasets):
     for kernel in ['rbf']:
-        for optimize_logdet in [0, 1]:
-            for split in range(5):
-                args = {'dataset': dataset, 
-                        'split': split, 
-                        'optimize_logdet': optimize_logdet,
-                        'kernel': kernel}
-                task = Task(id=args, processing_function=run_regression, args=args) 
-                gpu_queue.add_task(task)
+        for split in range(5):
+            for optimize_logdet in [0, 1]:
+                for optimize_logdet2 in [0, 1] if optimize_logdet else [0]:
+                    for standard_loss in [0, 1] if not optimize_logdet else [0]:
+                        for l2_reg in [0.0]:
+                            args = {'dataset': dataset, 
+                                    'split': split, 
+                                    'optimize_logdet': optimize_logdet,
+                                    'optimize_logdet2': optimize_logdet2,
+                                    'standard_loss': standard_loss,
+                                    'l2_reg': l2_reg,
+                                    'kernel': kernel,
+                                    'lr':0.01}
+                            task = Task(id=args, processing_function=run_regression, args=args) 
+                            gpu_queue.add_task(task)
 
 print(f"Running {gpu_queue.task_queue.qsize()} tasks on {num_gpus} GPUs")
 gpu_queue.process_tasks()  # User calls process_tasks when ready                

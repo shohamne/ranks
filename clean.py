@@ -36,16 +36,24 @@ class DeepNetwork(nn.Module):
                 module.bias.data.zero_()
 
     def forward(self, x):
+        activations = []
         for layer in self.layers:
-            z = x
+            activations.append(x)
             x = layer(x)
-        return x, z
+        return x, activations
 
     @property
     def w(self):
         return self.layers[-1][0].weight
 
+    @property
+    def weigths():
+        weights = []
+        for layer in self.layers:
+            weights.append(layer[0].weight)    
+        return weights
 
+        
 def str2bool(v):
     if isinstance(v, bool):
        return v
@@ -69,7 +77,11 @@ parser.add_argument('--weight_decay_rate', type=float, default=0.0, help='Weight
 parser.add_argument('--sigma', type=float, default=0.1, help='Sigma value for kernel')
 parser.add_argument('--csv_name', type=str, default='clean_results.csv', help='CSV filename for the results')
 parser.add_argument('--optimize_logdet', type=str2bool, default=True, help='CSV filename for the results')
+parser.add_argument('--optimize_logdet2', type=str2bool, default=False, help='CSV filename for the results')
 parser.add_argument('--kernel', type=str, default='linear', choices=['linear', 'rbf'], help='Kernel to use')
+parser.add_argument('--standard_loss', type=str2bool, default=False, help='Run standard training')
+parser.add_argument('--l2_reg', type=float, default=0.0, help='Lambda coefficient for l2 regularization')
+
 
 
 
@@ -78,7 +90,7 @@ args = parser.parse_args()
 # Open a new CSV file for writing
 with open(args.csv_name, mode='w') as csv_file:
     result_writer = csv.writer(csv_file)
-    result_writer.writerow(['Epoch', 'Train loss', 'Learning rate', 'Train MSE', 'Test MSE', 'logdet', 'sigma'])
+    result_writer.writerow(['Epoch', 'Train loss', 'Learning rate', 'Train MSE', 'Test MSE', 'logdet', 'sigma', 'Train NN MSE', 'Test NN MSE', 'Train loss2'])
 
     # Rest of your code with all the constants replaced with args.variable_name
     sigma = nn.Parameter(torch.tensor(args.sigma), requires_grad=args.optimize_logdet)
@@ -113,6 +125,8 @@ with open(args.csv_name, mode='w') as csv_file:
     elif args.kernel == 'rbf':
         kernel = GaussianKernel(1.0, 1.0).to(args.device)
 
+    linear_kernel = LinearKernel().to(args.device)
+
     criterion = nn.MSELoss()
     optimizer = optim.Adam(list(model.parameters()) + [sigma], lr=args.lr, weight_decay=args.weight_decay_rate)
     scheduler = ReduceLROnPlateau(optimizer, mode='min',min_lr=1e-5, factor=0.1, patience=50, verbose=True)
@@ -124,15 +138,23 @@ with open(args.csv_name, mode='w') as csv_file:
         for i, data in enumerate(train_loader):
             x_batch, y_batch = data[0].to(args.device), data[1].to(args.device)
             optimizer.zero_grad()
-            outputs, z = model(x_batch)
-            if epoch < 0:
-                loss = criterion(outputs, y_batch) + model.w.pow(2).sum() * sigma.detach()**2
+            outputs, activations = model(x_batch)
+            if args.standard_loss:
+                loss = criterion(outputs, y_batch) + args.l2_reg*model.w.pow(2).sum() 
             else:
+                z = activations[-1]
                 K = kernel(z) + sigma**2*torch.eye(z.shape[0], device=args.device)
                 Klogdet, Kinv = hermitian_logdet_and_inverse(K) 
                 loss = y_batch.T @ Kinv @ y_batch 
                 if args.optimize_logdet:
                     loss += Klogdet
+                if args.optimize_logdet2:
+                    assert args.optimize_logdet,  "args.optimize_logdet is 0"
+                    z2 = activations[-2]
+                    K = linear_kernel(z2) + sigma**2*torch.eye(z2.shape[0], device=args.device)
+                    # todo check _ is improve?
+                    Klogdet2, _ = hermitian_logdet_and_inverse(K)
+                    loss += Klogdet2
                 loss = loss / len(y_batch)
             loss.backward()
             optimizer.step()
@@ -142,11 +164,21 @@ with open(args.csv_name, mode='w') as csv_file:
         running_loss /= len(y_train)
 
         with torch.no_grad():
-            o_train, z_train = model(x_train)
-            o_test, z_test = model(x_test)
+            o_train, a_train = model(x_train)
+            o_test, a_test = model(x_test)
+            z_train = a_train[-1]
+            z_test = a_test[-1]
+            
             K = kernel(z_train) + sigma**2*torch.eye(z_train.shape[0], device=args.device) 
             Klogdet, Kinv = hermitian_logdet_and_inverse(K)
-            loss = (y_train.T @ Kinv @ y_train + Klogdet) / len(y_train)
+            loss = y_train.T @ Kinv @ y_train + Klogdet
+
+            K = kernel(a_train[-2]) + sigma**2*torch.eye(a_train[-2].shape[0], device=args.device)
+            Klogdet2, _ = hermitian_logdet_and_inverse(K)
+            loss2 = loss + Klogdet2
+
+            loss /= len(y_train)
+            loss2 /= len(y_train)
             alpha =  z_train.T @ Kinv @ y_train
             train_mse = criterion(kernel(z_train, z_train) @ Kinv @ y_train, y_train)
             test_mse = criterion(kernel(z_test, z_train) @ Kinv @ y_train, y_test)  
@@ -154,10 +186,15 @@ with open(args.csv_name, mode='w') as csv_file:
             nn_test_mse = criterion(o_test, y_test)
         
         print(f"Epoch OL{args.optimize_logdet:<7} {epoch+1}/{args.epochs}.. Train loss: {loss.item():.6f} lr: {optimizer.param_groups[0]['lr']:.6f} Train MSE: {train_mse.item():.6f}"
-              f" Test MSE: {test_mse.item():.6f} logdet: {Klogdet.item()/len(y_train):.6f} sigma: {sigma.item():.6f} running loss: {running_loss:.6f} {nn_train_mse.item():.6f} {nn_test_mse.item():.6f}")
+              f" Test MSE: {test_mse.item():.6f} logdet: {Klogdet.item()/len(y_train):.6f} sigma: {sigma.item():.6f}"
+              f" running loss: {running_loss:.6f} {nn_train_mse.item():.6f} {nn_test_mse.item():.6f} loss2: {loss2.item():.6f}")
         # Added Klogdet.item() and sigma.item() to the row
-        result_writer.writerow([epoch+1, loss.item(), optimizer.param_groups[0]['lr'], train_mse.item(), test_mse.item(), Klogdet.item()/len(y_train), sigma.item()])
+        result_writer.writerow([epoch+1, loss.item(), optimizer.param_groups[0]['lr'], train_mse.item(), test_mse.item(), 
+                                Klogdet.item()/len(y_train), sigma.item(), nn_train_mse.item(), nn_test_mse.item(), loss2.item()])
         csv_file.flush()
-        scheduler.step(train_mse)
+        if args.standard_loss:
+            scheduler.step(nn_train_mse)
+        else:
+            scheduler.step(train_mse)
         
 print('Finished Training')
