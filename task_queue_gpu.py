@@ -22,6 +22,7 @@ class GpuQueue:
         # Initially all GPUs are available tasks_per_gpu times
         for i in range(num_gpus):
             for _ in range(tasks_per_gpu):
+                print(f"GPU {i} is available")
                 self.available_gpus.put(i)
 
     def add_task(self, task):
@@ -32,6 +33,7 @@ class GpuQueue:
         with tqdm(total=self.task_queue.qsize(), ncols=70) as pbar:
             while not self.task_queue.empty():
                 gpu_index = self.available_gpus.get()  # This will block if no GPUs are available
+                print(f"GPU {gpu_index} is available")
                 task = self.task_queue.get()
                 future = self.executor.submit(self.run_task, task, gpu_index)
                 future.add_done_callback(functools.partial(self.task_done, task=task, gpu_index=gpu_index, pbar=pbar))
@@ -39,7 +41,8 @@ class GpuQueue:
             concurrent.futures.wait(futures)  # Wait for all tasks to complete
 
     def run_task(self, task, gpu_index):
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+        # os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+        task.kwargs['args']['device'] = f'cuda:{gpu_index}'
         return task.processing_function(*task.args, **task.kwargs)
 
     def task_done(self, future, task, gpu_index, pbar):

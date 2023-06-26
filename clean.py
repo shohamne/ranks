@@ -16,9 +16,11 @@ class DeepNetwork(nn.Module):
     def __init__(self, input_size):
         super(DeepNetwork, self).__init__()
         self.layers = nn.ModuleList(
-            [nn.Sequential(nn.Linear(input_size, 250, bias=False), nn.ReLU())] +
-            [nn.Sequential(nn.Linear(250, 250, bias=False), nn.ReLU()) for _ in range(3 - 2)] +
-            [nn.Sequential(nn.Linear(250, 1, bias=False))]
+            [nn.Sequential(nn.Linear(input_size, 1000, bias=False), nn.ReLU())] +
+            [nn.Sequential(nn.Linear(1000, 500, bias=False), nn.ReLU())] +
+            [nn.Sequential(nn.Linear(500, 50, bias=False), nn.ReLU())] +
+            [nn.Sequential(nn.Linear(50, 2, bias=False))] +
+            [nn.Sequential(nn.Linear(2, 1, bias=False))]
         )
         # self.layers = nn.ModuleList(
         #     [nn.Sequential(nn.Linear(input_size, 200, bias=False), nn.ReLU())] +
@@ -70,7 +72,7 @@ parser = argparse.ArgumentParser(description='GP Regression')
 parser.add_argument('--device', type=str, default='cuda', help='Device to run on')
 parser.add_argument('--dataset', type=str, default='energy', help='Dataset to use')
 parser.add_argument("--split", type=int, default=0, help="Split of the dataset to use for training")
-parser.add_argument('--batch_size', type=int, default=256, help='Batch size')
+parser.add_argument('--batch_size', type=int, default=512, help='Batch size')
 parser.add_argument('--lr', type=float, default=0.01, help='Learning rate')
 parser.add_argument('--epochs', type=int, default=1500, help='Number of epochs')
 parser.add_argument('--weight_decay_rate', type=float, default=0.0, help='Weight decay rate for optimizer')
@@ -128,7 +130,7 @@ with open(args.csv_name, mode='w') as csv_file:
     linear_kernel = LinearKernel().to(args.device)
 
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(list(model.parameters()) + [sigma], lr=args.lr, weight_decay=args.weight_decay_rate)
+    optimizer = optim.Adam(list(model.parameters()) + list(kernel.parameters()) + [sigma], lr=args.lr, weight_decay=args.weight_decay_rate)
     scheduler = ReduceLROnPlateau(optimizer, mode='min',min_lr=1e-5, factor=0.1, patience=50, verbose=True)
 
     running_loss = 0
@@ -160,6 +162,8 @@ with open(args.csv_name, mode='w') as csv_file:
             optimizer.step()
             running_loss += loss.item()*len(y_batch)
             sigma.data.clamp_(min=1e-1)
+            kernel.length_scale.data.clamp_(min=1e-1)
+            kernel.sigma_f.data.clamp_(min=1e-1)
 
         running_loss /= len(y_train)
 
@@ -192,6 +196,7 @@ with open(args.csv_name, mode='w') as csv_file:
         result_writer.writerow([epoch+1, loss.item(), optimizer.param_groups[0]['lr'], train_mse.item(), test_mse.item(), 
                                 Klogdet.item()/len(y_train), sigma.item(), nn_train_mse.item(), nn_test_mse.item(), loss2.item()])
         csv_file.flush()
+        
         if args.standard_loss:
             scheduler.step(nn_train_mse)
         else:
